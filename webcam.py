@@ -6,19 +6,18 @@ import dlib
 import numpy as np
 
 # Import dlib face alignment file
-PREDICTOR_PATH = "shape_predictor_68_face_landmarks.dat"
-FULL_POINTS = list(range(0, 68))
-FACE_POINTS = list(range(17, 68))
-JAWLINE_POINTS = list(range(0, 17))
-RIGHT_EYEBROW_POINTS = list(range(17, 22))
-LEFT_EYEBROW_POINTS = list(range(22, 27))
-NOSE_POINTS = list(range(27, 36))
-RIGHT_EYE_POINTS = list(range(36, 42))
-LEFT_EYE_POINTS = list(range(42, 48))
-MOUTH_OUTLINE_POINTS = list(range(48, 61))
-MOUTH_INNER_POINTS = list(range(61, 68))
 detector = dlib.get_frontal_face_detector()
-predictor = dlib.shape_predictor(PREDICTOR_PATH)
+predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
+
+# Define facial landmarks
+landmarks = {'jawline': list(range(0, 17)),
+             'right_eyebrow': list(range(17, 22)),
+             'left_eyebrow': list(range(22, 27)),
+             'nose': list(range(27, 36)),
+             'right_eye': list(range(36, 42)),
+             'left_eye': list(range(42, 48)),
+             'outer_mouth': list(range(48, 60)),
+             'inner_mouth': list(range(60, 68))}
 
 # Face tracking
 crop = np.zeros((256, 256, 3), dtype=np.uint8)
@@ -63,36 +62,46 @@ while True:
         shape = np.vstack((shape, forehead_rt, forehead_lt, forehead_rs,
                            forehead_ls, midpoint_r, midpoint_l)).astype(np.int)
 
-        # Preallocate mask array
-        feature_mask = np.zeros(frame.shape[:2])
-
         # Generate face mask
-        cv2.fillConvexPoly(feature_mask, cv2.convexHull(shape), 1)
-        cv2.fillConvexPoly(feature_mask, cv2.convexHull(shape[RIGHT_EYE_POINTS]), 0)
-        cv2.fillConvexPoly(feature_mask, cv2.convexHull(shape[LEFT_EYE_POINTS]), 0)
-        cv2.fillConvexPoly(feature_mask, cv2.convexHull(shape[MOUTH_OUTLINE_POINTS]), 0)
-        frame[~feature_mask.astype(np.bool)] = 0
+        face_mask = np.zeros(frame.shape[:2])
+        cv2.fillConvexPoly(face_mask, cv2.convexHull(shape), 1)
+        
+        # Overlay focused face over blurred background
+        background = cv2.blur(frame, (50, 50))
+        background[face_mask.astype(np.bool)] = 0
+        frame[~face_mask.astype(np.bool)] = 0
+        frame = frame + background
 
-        # Determine bounding box
+        # Draw landmarks
+        for feature, points in landmarks.items():
+            if feature == 'nose':
+                points += [points[3]]
+            elif feature == 'jawline':
+                pass
+            else:
+                points += [points[0]]
+            for i in range(len(points) - 1):
+                cv2.line(frame, tuple(shape[points[i]]), tuple(shape[points[i+1]]), (0, 0, 255), 2)
+
+        # Determine bounding box dimensions
         left, top = shape.min(axis=0)
-        right, bottom = shape.max(axis=0)
-        left = left if left >= 0 else 0
-        top = top if top >= 0 else 0
-        right = right if right < frame.shape[1] else frame.shape[1] - 1
-        bottom = bottom if bottom < frame.shape[0] else frame.shape[0] - 1
-        width, height = right - left, bottom - top
+        width, height = shape.max(axis=0) - shape.min(axis=0)
+        left = left if width >= height else left - int((height - width) / 2)
+        top = top if height >= width else top - int((width - height) / 2)
+        length = max(width, height)
 
-        # Extract square bounding box
-        if height > width:
-            bounding_box = np.zeros((height, height, 3), dtype=np.uint8)
-            padding = (height - width) // 2
-            bounding_box[:, padding:width + padding] = frame[top:bottom, left:right]
-            crop = cv2.resize(bounding_box, (256, 256), interpolation=cv2.INTER_LINEAR)
-        else:
-            bounding_box = np.zeros((width, width, 3), dtype=np.uint8)
-            padding = (width - height) // 2
-            bounding_box[padding:height + padding, :] = frame[top:bottom, left:right]
-            crop = cv2.resize(bounding_box, (256, 256), interpolation=cv2.INTER_LINEAR)
+        # Ensure bounding box is within frame
+        if left < 0:
+            left = 0
+        elif left + length >= frame.shape[1]:
+            left -= frame.shape[1] - left - length + 1
+        if top < 0:
+            top = 0
+        elif top + length >= frame.shape[0]:
+            top -= frame.shape[0] - top - length + 1
+
+        crop = cv2.resize(frame[top:top + length, left:left + length],
+                          (256, 256), interpolation=cv2.INTER_LINEAR)
 
     # Display the resulting frame
     cv2.imshow('Video', crop)
