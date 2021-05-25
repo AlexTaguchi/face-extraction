@@ -1,2 +1,2 @@
 # face-extraction
-Extract face landmarks from images or webcam video
+Extract the skin region of faces from photos
